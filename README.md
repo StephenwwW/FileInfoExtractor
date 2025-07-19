@@ -38,6 +38,7 @@ This is a utility designed for Windows to scan directories for video files, extr
       - Once the scan is complete, click "Export to Excel" to save the results.
 
 ### User Interface
+![Screenshot](FileInfoExtractor/images/screenshot.png)
 
 ### Notes
 
@@ -85,6 +86,7 @@ This is a utility designed for Windows to scan directories for video files, extr
       - 掃描完成後，點擊「Export to Excel」即可將結果匯出。
 
 ### 介面截圖
+![介面截圖](FileInfoExtractor/images/screenshot.png)
 
 ### 備註
 
