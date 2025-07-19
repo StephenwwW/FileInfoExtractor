@@ -1,4 +1,4 @@
 moviepy
 openpyxl
 pandas
-tkinter; sys_platform == 'win32' or sys_platform == 'darwin' 
+humanize
