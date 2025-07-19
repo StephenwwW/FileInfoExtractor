@@ -8,19 +8,21 @@ from openpyxl.styles import Alignment
 import threading
 from moviepy.editor import VideoFileClip
 import humanize
+import subprocess
+import json
 
 class FileInfoExtractorApp:
     def __init__(self, root):
         self.root = root
         self.root.title("File Info Extractor")
-        self.root.geometry("432x150")  # 最佳GUI大小，適合顯示所有元件
+        self.root.geometry("432x150")
 
-        self.folder_path = tk.StringVar()  # 儲存選擇的資料夾路徑
-        self.file_info_list = []  # 儲存掃描結果
+        self.folder_path = tk.StringVar()
+        self.file_info_list = []
 
         # ====== 資料夾選擇區塊 ======
         label = tk.Label(root, text="Select Root Folder:", anchor='center')
-        label.pack(fill='x', pady=4)  # 置中顯示
+        label.pack(fill='x', pady=4)
         frame = tk.Frame(root)
         frame.pack(pady=2)
         tk.Entry(frame, textvariable=self.folder_path, width=45).pack(side=tk.LEFT, padx=2)
@@ -41,42 +43,66 @@ class FileInfoExtractorApp:
         tk.Button(btn_frame, text="Export to Excel", width=btn_width, height=btn_height, command=self.export_excel).pack(side=tk.LEFT, padx=12)
 
     def browse_folder(self):
-        """彈出資料夾選擇視窗，選擇後將路徑寫入輸入框"""
         folder_selected = filedialog.askdirectory()
         if folder_selected:
             self.folder_path.set(folder_selected)
 
     def format_duration(self, seconds):
-        """將秒數轉為 hh:mm:ss 格式字串"""
         hours = int(seconds // 3600)
         minutes = int((seconds % 3600) // 60)
         seconds = int(seconds % 60)
         return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
     def format_size(self, size_bytes):
-        """將位元組轉為GB或MB字串，保留兩位小數"""
         if size_bytes >= 1024**3:
             return f"{size_bytes/1024**3:.2f} GB"
         else:
             return f"{size_bytes/1024**2:.2f} MB"
 
+    # === 新增功能：使用 ffprobe 獲取影片編碼 (更可靠的方法) ===
+    def get_video_codec(self, file_path):
+        """使用 ffprobe 直接獲取影片編碼，結果更準確"""
+        command = [
+            'ffprobe',
+            '-v', 'quiet',
+            '-print_format', 'json',
+            '-select_streams', 'v:0',
+            '-show_entries', 'stream=codec_name',
+            file_path
+        ]
+        try:
+            # 執行命令，並設定 timeout 以免卡在損毀的檔案
+            result = subprocess.run(command, capture_output=True, text=True, check=True, timeout=30)
+            data = json.loads(result.stdout)
+            if data and 'streams' in data and data['streams']:
+                codec = data['streams'][0].get('codec_name', 'N/A').upper()
+                if codec == 'HEVC':
+                    return 'H265'
+                return codec
+            return 'N/A'
+        except FileNotFoundError:
+            # 如果系統找不到 ffprobe 命令，則返回特定錯誤訊息
+            messagebox.showerror("錯誤", "找不到 ffprobe 命令。\n請確認您已安裝 FFmpeg 並將其路徑加入系統環境變數中。")
+            self.root.quit() # 終止程式
+            return 'FFPROBE_NOT_FOUND'
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, json.JSONDecodeError, IndexError):
+            # 處理各種可能的錯誤：ffprobe執行失敗、超時、JSON解析失敗、沒有影片串流等
+            return 'N/A'
+
     def scan_files_thread(self):
-        """啟動新執行緒進行檔案掃描，避免GUI卡死"""
         t = threading.Thread(target=self.scan_files)
         t.daemon = True
         t.start()
 
     def scan_files(self):
-        """掃描所選資料夾下所有影片檔案，取得檔案資訊並更新進度條"""
         root_folder = self.folder_path.get()
         if not root_folder:
             messagebox.showwarning("Warning", "Please select a folder first!")
             return
 
         self.file_info_list = []
-        video_extensions = ('.mp4', '.ts', '.mkv', '.avi', '.mov')  # 支援的影片副檔名
+        video_extensions = ('.mp4', '.ts', '.mkv', '.avi', '.mov')
 
-        # 先統計所有要處理的檔案數量
         total_files = 0
         for root, dirs, files in os.walk(root_folder):
             for file in files:
@@ -97,21 +123,28 @@ class FileInfoExtractorApp:
                 for file in files:
                     if file.lower().endswith(video_extensions):
                         file_path = os.path.join(root, file)
+                        
+                        # === 修改處：呼叫新的 get_video_codec 函式 ===
+                        codec = self.get_video_codec(file_path)
+                        if codec == 'FFPROBE_NOT_FOUND': # 如果找不到 ffprobe，則停止掃描
+                            return
+
                         try:
-                            file_size_bytes = os.path.getsize(file_path)  # 取得檔案大小
+                            file_size_bytes = os.path.getsize(file_path)
                             with VideoFileClip(file_path) as clip:
-                                duration_seconds = clip.duration  # 取得影片長度
-                            # 計算平均每小時檔案大小
+                                duration_seconds = clip.duration
+                                resolution_str = f"{clip.size[0]}x{clip.size[1]}"
+                            
                             if duration_seconds >= 3600:
                                 avg_size_per_hour = file_size_bytes / (duration_seconds / 3600)
-                                if avg_size_per_hour >= 1024**3:
-                                    avg_size_str = f"{avg_size_per_hour/1024**3:.2f} GB/hr"
-                                else:
-                                    avg_size_str = f"{avg_size_per_hour/1024**2:.2f} MB/hr"
+                                avg_size_str = f"{avg_size_per_hour/1024**3:.2f} GB/hr"
                             else:
                                 avg_size_str = '無法計算'
+                            
                             file_info = {
-                                'File Name': file,  # 只顯示檔案名稱
+                                'File Name': file,
+                                'Codec': codec,
+                                'Resolution': resolution_str,
                                 'Video Duration': self.format_duration(duration_seconds),
                                 'File Size': self.format_size(file_size_bytes),
                                 'File Size in Bytes': file_size_bytes,
@@ -119,9 +152,9 @@ class FileInfoExtractorApp:
                             }
                             self.file_info_list.append(file_info)
                         except Exception as e:
-                            print(f"Error processing file {file_path}: {str(e)}")
+                            print(f"Error processing file with moviepy {file_path}: {str(e)}")
                             continue
-                        # 更新進度條
+                        
                         processed += 1
                         self.progress['value'] = processed
                         percent = int(processed / total_files * 100)
@@ -134,7 +167,6 @@ class FileInfoExtractorApp:
             messagebox.showerror("Error", f"An error occurred during scanning: {str(e)}")
 
     def export_excel(self):
-        """將掃描結果匯出為Excel檔，並自動調整欄寬與對齊"""
         if not self.file_info_list:
             messagebox.showwarning("Warning", "No data to export. Please scan first.")
             return
@@ -145,10 +177,17 @@ class FileInfoExtractorApp:
         )
         if not save_path:
             return
+        
         df = pd.DataFrame(self.file_info_list)
+        
+        column_order = [
+            'File Name', 'Codec', 'Resolution', 'Video Duration', 
+            'File Size', 'File Size in Bytes', 'Average File Size Per Hour'
+        ]
+        df = df[column_order]
+        
         df.to_excel(save_path, index=False)
 
-        # 用 openpyxl 調整Excel格式：A欄只根據標題寬度，其他欄根據標題自動調整，所有儲存格靠左對齊
         wb = load_workbook(save_path)
         ws = wb.active
         a1_length = len(str(ws['A1'].value))
@@ -166,4 +205,4 @@ class FileInfoExtractorApp:
 if __name__ == "__main__":
     root = tk.Tk()
     app = FileInfoExtractorApp(root)
-    root.mainloop() 
+    root.mainloop()
