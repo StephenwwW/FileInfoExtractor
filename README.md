@@ -1,6 +1,6 @@
 # File Info Extractor
 
-## \<a name="english"\>\</a\>English
+### English
 
 ### Overview
 
@@ -47,7 +47,7 @@ This is a utility designed for Windows to scan directories for video files, extr
 
 -----
 
-## \<a name="中文"\>\</a\>中文
+### 中文
 
 ### 功能概覽
 
